@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
 
 namespace sabatex.RadzenBlazor.UIExt
@@ -23,6 +24,17 @@ namespace sabatex.RadzenBlazor.UIExt
         {
             var module = await moduleTask.Value;
             return await module.InvokeAsync<string>("showPrompt", message);
+        }
+
+        //public async ValueTask FocusElement(ElementReference elementReference)
+        //{
+        //    var module = await moduleTask.Value;
+        //   await module.InvokeAsync<string>("focusElement", elementReference);
+        //}
+        public async ValueTask FocusElement(string elementReference)
+        {
+            var module = await moduleTask.Value;
+            await module.InvokeAsync<string>("focusElement", elementReference);
         }
 
         public async ValueTask DisposeAsync()
