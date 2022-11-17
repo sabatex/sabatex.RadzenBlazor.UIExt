@@ -361,3 +361,4 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/sabatex.RadzenBlazor.UIExt/bin/Release/net6.0/publish/wwwroot/sabatexRadzenBlazorUIExt.ts
