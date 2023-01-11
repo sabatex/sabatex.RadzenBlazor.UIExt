@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Components;
+using Microsoft.Extensions.Logging;
 using Radzen;
 using System;
 using System.Collections.Generic;
@@ -17,25 +18,71 @@ public class RadzenOdataAdapter : IRadzenDataAdapter
     private readonly Uri baseUri;
     private readonly NavigationManager navigationManager;
     private readonly NotificationService notificationService;
+    private readonly ILogger<RadzenOdataAdapter> logger;
 
 
-    public RadzenOdataAdapter(HttpClient httpClient, NavigationManager navigationManager, NotificationService notificationService)
+    public RadzenOdataAdapter(HttpClient httpClient, NavigationManager navigationManager, NotificationService notificationService,ILogger<RadzenOdataAdapter> logger)
     {
         this.httpClient = httpClient;
         this.navigationManager = navigationManager;
         baseUri = new Uri($"{navigationManager.BaseUri}odata/");
         this.notificationService = notificationService;
+        this.logger= logger;
     }
     public async Task<(IEnumerable<TItem> items,int count)> GetAsync<TItem>(string? filter, string? orderby, string? expand, int? top, int? skip, bool? count, string? format = null, string? select = null) where TItem : class
     {
         try
         {
-            var uri = new Uri(baseUri, typeof(TItem).Name);
-            uri = Radzen.ODataExtensions.GetODataUri(uri: uri, filter: filter, top: top, skip: skip, orderby: orderby, expand: expand, select: select, count: count);
-            Console.Write($"client get - {uri.ToString()}") ;
-            
-            var httpRequestMessage = new HttpRequestMessage(HttpMethod.Get, uri);
-            var response = await httpClient.SendAsync(httpRequestMessage);
+            var uri = new Uri(baseUri, $"{typeof(TItem).Name}/$query");
+            var query = new StringBuilder();
+            bool last = false;
+            if (top.HasValue)
+            {
+                query.Append($"$top={top}");
+                last = true;
+            }
+            if (skip.HasValue)
+            {
+                if (last) query.Append('&');
+                query.Append($"$skip={skip}");
+                last = true;
+
+            }
+            if (count ?? false)
+            {
+                if (last) query.Append('&');
+                query.Append($"$count=true");
+                last = true;
+            }
+            if (!string.IsNullOrEmpty(orderby))
+            {
+                if (last) query.Append('&');
+                query.Append($"$orderby={orderby}");
+                last = true;
+            }
+            if (!string.IsNullOrEmpty(filter))
+            {
+                if (last) query.Append('&');
+                query.Append($"$filter={filter}");
+                last = true;
+            }
+            if (!string.IsNullOrEmpty(expand))
+            {
+                if (last) query.Append('&');
+                query.Append($"$expand={expand}");
+                last = true;
+            }
+            if (!string.IsNullOrEmpty(select))
+            {
+                if (last) query.Append('&');
+                query.Append($"$select={select}");
+                last = true;
+            }
+            logger.LogInformation(query.ToString());
+            //body = Radzen.ODataExtensions.GetODataUri(uri: body, filter: filter, top: top, skip: skip, orderby: orderby, expand: expand, select: select, count: count);
+  
+            //var httpRequestMessage = new HttpRequestMessage(HttpMethod.Post, uri);
+            var response = await httpClient.PostAsync(uri.ToString(), new StringContent(query.ToString(), Encoding.UTF8, "text/plain"));
             var result = await Radzen.HttpResponseMessageExtensions.ReadAsync<Radzen.ODataServiceResult<TItem>>(response);
             return (result.Value.AsODataEnumerable(), result.Count);
         }
@@ -104,7 +151,7 @@ public class RadzenOdataAdapter : IRadzenDataAdapter
         navigationManager.NavigateTo(query != null ? query.ToUrl($"api/csv(fileName='{(!string.IsNullOrEmpty(fileName) ? UrlEncoder.Default.Encode(fileName) : "Export")}')") : $"export/tg/tgclients/csv(fileName='{(!string.IsNullOrEmpty(fileName) ? UrlEncoder.Default.Encode(fileName) : "Export")}')", true);
     }
 
-    public async Task FillData<TItem>(RadzenODataCollection<TItem>? dataCollection, LoadDataArgs args, string? expand = null, string? filterFields = null) where TItem : class
+    public async Task FillData<TItem>(RadzenODataCollection<TItem>? dataCollection, LoadDataArgs args, string? expand = null, IEnumerable<FieldDescriptor>? filterFields = null) where TItem : class
     {
         try
         {
@@ -113,18 +160,13 @@ public class RadzenOdataAdapter : IRadzenDataAdapter
             string? filter = null;
             if (filterFields != null && args.Filter !=null)
             {
-                var sb = new StringBuilder();
-                bool first = true;
-                foreach (var field in filterFields.Split(','))
+                ODataSearchFilterBuilder filterBuilder = new ODataSearchFilterBuilder();
+                foreach (var field in filterFields)
                 {
-                    if (!first)
-                    {
-                        sb.Append(" or ");
-                        first = false;
-                    }
-                    sb.Append($"contains({field},'{args.Filter.ToLower()}')");
-                 }
-                filter= sb.ToString();
+                    filterBuilder.AddField(field, args.Filter);
+                    
+                }
+                filter= filterBuilder.ToString();
             }
 
             var result = await GetAsync<TItem>(orderby: $"{args.OrderBy}",
@@ -147,5 +189,53 @@ public class RadzenOdataAdapter : IRadzenDataAdapter
 
         }
 
+    }
+}
+
+internal struct ODataSearchFilterBuilder
+{
+    StringBuilder sb;
+    bool first;
+    public ODataSearchFilterBuilder()
+    {
+       sb = new StringBuilder();
+       first = true;
+
+    }
+
+    void AddStringSearch(string FieldName,string value)
+    {
+        AddOperation();
+        sb.Append($"contains({FieldName},'{value}')");
+    }
+    void AddIntSearch(string FieldName, string value)
+    {
+        if (int.TryParse(value, out int _))
+        {
+            AddOperation();
+            sb.Append($"{FieldName} eq {value}");
+        }
+    }
+    void AddOperation()
+    {
+        if (!first) sb.Append(" or ");
+        first = false;
+    }
+    public void AddField(FieldDescriptor fieldDescriptor,string value)
+    {
+        if (fieldDescriptor.FieldType == typeof(string))
+        {
+            AddStringSearch(fieldDescriptor.Name, value);
+        }
+        else if (fieldDescriptor.FieldType == typeof(int))
+        {
+            AddIntSearch(fieldDescriptor.Name, value);
+        }
+
+
+    }
+    public override string ToString()
+    {
+        return sb.ToString();
     }
 }
